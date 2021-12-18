@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "csapp.h"
+#include <assert.h>
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
@@ -20,21 +21,35 @@ typedef struct{
     int readcnt; // record number of readers for cache
     sem_t *RC_mutex; // readcnt mutex
     int index;  // index for LRU
-
 }Cache;
 
 Cache cachePool;
 
+typedef struct{
+    char method[MAXLINE];
+    char uri[MAXLINE];
+    char version[MAXLINE];
+    char host[MAXLINE];
+    char port[MAXLINE];
+    char path[MAXLINE];
+}reqLine;
 
+typedef struct{
+    char* rqst_line;
+    char* hdr_lines;
+}reqHeader;
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
+static const char *conn_hdr = "Connection: close\r\n";
+static const char *proxy_conn_hdr = "Proxy-Connection: close\r\n";
 
-void doit(int connfd);
-void parse_url(char*url, char* hostname,char* port, char* uri);
+
+void doit(int client_fd);
 void *thread(void *vargp);
-int parse_request(rio_t* rp, char* method, char* host, char* port, char* uri);
-void parse_Header(rio_t* rp, char* clientbuf, char* host);
+void parse_request(char* buf, reqLine* request_line);
+void parse_uri(char* uri,char* host,char* port, char* path);
+void parse_Header(rio_t* rp, char* proxybuf, reqLine* request_line);
 int readCache(int fd, char* url);
 void writeCache(char* url, char* object);
 void initCache(Cache* cachePool);
@@ -78,115 +93,108 @@ void* thread(void * vargp){
     return NULL;
 }
 
-void doit(int connfd){
+void doit(int client_fd){
     #define PORT_LEN 20
-    char clientbuf[MAXLINE], method[MAXLINE],
-        host[MAXLINE], port[PORT_LEN], uri[MAXLINE];
-    char url[MAXLINE], objectbuf[MAX_OBJECT_SIZE];
-    int clientfd;
-    rio_t rio, client_rio;
+    char clientbuf[MAXLINE], objectbuf[MAX_OBJECT_SIZE], proxybuf[MAXLINE];
+    reqHeader new_hdr;
+    reqLine request_line;
+    int proxy_fd;
+    rio_t proxy_rio, client_rio;
     
-    Rio_readinitb(&rio, connfd);
-    /*parse fisrst line of request, and close invalid request*/
-    if(!parse_request(&rio, method, host, port, uri)){
-        return ;
-    }
+    /*parse request line and header*/
+    Rio_readinitb(&client_rio, client_fd);
+    if (!Rio_readlineb(&client_rio, clientbuf, MAXLINE))
+        return;
+    printf("%s", clientbuf);
+    parse_request(clientbuf, &request_line);
+    printf("host: %s\nport: %s\npath: %s\n", request_line.host, 
+    request_line.port, request_line.path);
     /*check cache*/
-    sprintf(url,"%s%s%s", host, port, uri);
-    if(readCache(connfd, url)){
+    if(readCache(client_fd, request_line.uri)){
         printf("find object in cache\n");
         return ;
     }
+    printf("Not in cache, build a connection\n");
     /*build a proxy web client*/
-    clientfd = Open_clientfd(host, port);
-    Rio_readinitb(&client_rio, clientfd);
-    /*proxy request line*/
-    strcpy(clientbuf, "");
-    sprintf(clientbuf, "%s %s %s\r\n", method, uri, "HTTP/1.0");
-    parse_Header(&rio, clientbuf, host); // parse the rest header
+    proxy_fd = Open_clientfd(request_line.host, request_line.port);
+    Rio_readinitb(&proxy_rio, proxy_fd);
+    parse_Header(&client_rio, proxybuf, &request_line); // parse the rest header
     /*send proxy request to web server*/
-    Rio_writen(clientfd, clientbuf, strlen(clientbuf));
+    printf("%s",proxybuf);
+    Rio_writen(proxy_fd, proxybuf, strlen(proxybuf));
     int n;
     int objectSize = 0;
     /*forward the webserver's replies to the host*/
-    while((n = Rio_readlineb(&client_rio, clientbuf, MAXLINE))){
+    while((n = Rio_readlineb(&proxy_rio, proxybuf, MAXLINE))){
         printf("proxy server received %d bytes\n", (int)n);
-        Rio_writen(connfd, clientbuf, n);
+        Rio_writen(client_fd, proxybuf, n);
         strcpy(objectbuf+objectSize,clientbuf);
         objectSize += n;
     }
     if(objectSize < MAX_OBJECT_SIZE){
-        writeCache(url, objectbuf);
+        writeCache(request_line.uri, objectbuf);
     }
-    Close(clientfd);
+    Close(proxy_fd);
     
 
 }
 
-int parse_request(rio_t* rp, char* method, char* host, char* port, char* uri){
-    char buf[MAXLINE], url[MAXLINE], version[MAXLINE];
-    if(!Rio_readlineb(rp, buf, MAXLINE))
-        return 0;
-    printf("%s", buf);
-    sscanf(buf, "%s %s %s",method, url, version);
-    if(strcasecmp(method, "GET")){
-        fprintf(stderr,"invalid method\n");
-        return 0;
-    }
-    if(!strstr(url, "http://")){
-        fprintf(stderr,"invalid URL\n");
-        return 0;
-    }
-    parse_url(url, host, port, uri);
-    return 1;
+void parse_request(char* buf, reqLine* request_line){
+    char* method = request_line->method;
+    char* uri =   request_line->uri;
+    char* version = request_line->version;
+    char* host = request_line->host;
+    char* port = request_line->port;
+    char* path = request_line->path;
+    sscanf(buf, "%s %s %s", method, uri, version);
+    assert(!strcasecmp(method, "GET"));
+    parse_uri(uri, host, port, path);
+
 }
 
-void parse_url(char* url, char* hostname, char* port, char* uri){
-    // char *ptr;
-    char* p_hostname = url+sizeof("http://")-1;
-    char* p_port = index(p_hostname, ':');
-    char* p_uri = index(p_hostname, '/');
-    if(p_uri){
-        strcpy(uri, p_uri);
-        *p_uri = '\0';
-    }else{
-        printf("invalid uri\n");
+
+void parse_uri(char* uri, char* host, char* port, char* path){
+    assert(strstr(uri, "http://"));
+    char buf[MAXLINE];
+    strcpy(buf, uri);
+    char* ptr_host = buf+strlen("http://");
+    char* ptr_port = strstr(ptr_host, ":");
+    char* ptr_path = strstr(ptr_host, "/");
+    assert(ptr_path);
+    *ptr_path = '\0';
+    if(ptr_port){
+        *ptr_port = '\0';
+        strcpy(port, ptr_port+1);    
     }
-    if(p_port){
-        strcpy(port, p_port+1);
-        *p_port = '\0';
-    }
-    else{
+    else
         strcpy(port, "80");
-    }
-    strcpy(hostname, p_hostname);
-    printf("hostname: %s\nport: %s\nuri: %s\n", 
-            hostname, port, uri);
-    
+    strcpy(host, ptr_host);
+    *ptr_path = '/';
+    strcpy(path, ptr_path);
 }
 
-void parse_Header(rio_t* rp, char* clientbuf, char* host){
-    char buf[MAXLINE], header[MAXLINE];
+void parse_Header(rio_t* rp, char* proxybuf, reqLine* request_line){
+    char buf[MAXLINE];
+    /*build proxy request line*/
+    strcpy(proxybuf, "");
+    sprintf(proxybuf, "%s %s %s\r\n", request_line->method, 
+    request_line->path, "HTTP/1.0");
+    sprintf(proxybuf,"%sHost: %s\r\n", proxybuf, request_line->host);
+    sprintf(proxybuf,"%s%s", proxybuf, user_agent_hdr);
+    sprintf(proxybuf,"%s%s", proxybuf, conn_hdr);
+    sprintf(proxybuf,"%s%s", proxybuf, proxy_conn_hdr);
     /*read headr from client*/
-    do{
-        Rio_readlineb(rp, buf, MAXLINE);
-	    printf("%s", buf);
+    while(Rio_readlineb(rp, buf, MAXLINE) > 0){
+        if(!strcmp(buf, "\r\n")) break;
+        printf("%s", buf);
         if(strstr(buf,"Connection:") || strstr(buf, "User-Agent:")
-            || strstr(buf, "Proxy-Connection:"))
+            || strstr(buf, "Proxy-Connection:") || strstr(buf,"Host:"))
             continue;
-        sprintf(header, "%s%s", header, buf);
-    }while(strcmp(buf, "\r\n"));
-    /*rewrite the header for proxy http request*/
-    if(!strstr(header, "Host:"))
-        sprintf(clientbuf,"%sHost: %s\r\n", clientbuf, host);
-    sprintf(clientbuf,"%s%s\r\n", clientbuf, user_agent_hdr);
-    sprintf(clientbuf,"%sConnection: close\r\n", clientbuf);
-    sprintf(clientbuf,"%sProxy-Connection: close\r\n", clientbuf);
-    sprintf(clientbuf, "%s%s", clientbuf, header);
-    sprintf(clientbuf,"%s\r\n", clientbuf);
-    return ;
-    
+        sprintf(proxybuf, "%s%s", proxybuf, buf);
+    }
+    sprintf(proxybuf,"%s\r\n", proxybuf);
 }
+
 
 void initCache(Cache* cachePool){
     cachePool->RC_mutex = (sem_t*) Malloc(sizeof(sem_t));
@@ -237,7 +245,7 @@ int readCache(int fd, char* url){
     }
     V(cachePool.RC_mutex);
     return ret;
-    // printf("search in cache finished \n");
+    printf("search in cache finished \n");
 }
 void writeCache(char* url, char* object){
     P(cachePool.RW_mutex);
