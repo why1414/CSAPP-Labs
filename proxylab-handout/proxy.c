@@ -110,10 +110,10 @@ void doit(int client_fd){
     printf("host: %s\nport: %s\npath: %s\n", request_line.host, 
     request_line.port, request_line.path);
     /*check cache*/
-    if(readCache(client_fd, request_line.uri)){
-        printf("find object in cache\n");
-        return ;
-    }
+    // if(readCache(client_fd, request_line.uri)){
+    //     printf("find object in cache\n");
+    //     return ;
+    // }
     printf("Not in cache, build a connection\n");
     /*build a proxy web client*/
     proxy_fd = Open_clientfd(request_line.host, request_line.port);
@@ -125,16 +125,19 @@ void doit(int client_fd){
     int n;
     int objectSize = 0;
     /*forward the webserver's replies to the host*/
-    while((n = Rio_readlineb(&proxy_rio, proxybuf, MAXLINE))){
+    while((n = Rio_readlineb(&proxy_rio, proxybuf, MAXLINE))!=0){
         printf("proxy server received %d bytes\n", (int)n);
         Rio_writen(client_fd, proxybuf, n);
-        strcpy(objectbuf+objectSize,clientbuf);
+        strcpy(objectbuf+objectSize,proxybuf);
         objectSize += n;
     }
     if(objectSize < MAX_OBJECT_SIZE){
+        printf("Caching object...\n");
         writeCache(request_line.uri, objectbuf);
+        printf("Cache succeed!\n");
     }
     Close(proxy_fd);
+    printf("Connection closed\n");
     
 
 }
@@ -245,7 +248,7 @@ int readCache(int fd, char* url){
     }
     V(cachePool.RC_mutex);
     return ret;
-    printf("search in cache finished \n");
+    
 }
 void writeCache(char* url, char* object){
     P(cachePool.RW_mutex);
@@ -271,7 +274,7 @@ void writeCache(char* url, char* object){
     cachePool.objectNum++;
     cachePool.index = (tmpidx + 1)%MAX_CACHE_NUM;
     V(cachePool.RW_mutex);
-    // printf("write cache successful, url: %s\n", url);
+    printf("write cache successful, url: %s\n", url);
 }
 
 
