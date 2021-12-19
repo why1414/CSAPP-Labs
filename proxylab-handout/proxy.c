@@ -4,23 +4,22 @@
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
-#define MAX_CACHE_NUM MAX_CACHE_SIZE/MAX_OBJECT_SIZE
+#define MAX_CACHE_NUM 10
 
 typedef struct{
     char* name;
     char* body;
     int LRU;
     int isEmpty;
-    sem_t *LRU_mutex; // mutex for modify LRU for each object
 }object;
 
 typedef struct{
     object* objectList[MAX_CACHE_NUM];
     int objectNum;
-    sem_t *RW_mutex; // mutex for read and write on the whole cachePool
     int readcnt; // record number of readers for cache
-    sem_t *RC_mutex; // readcnt mutex
     int index;  // index for LRU
+    sem_t *RW_mutex; // mutex for read and write on the whole cachePool
+    sem_t *RC_mutex; // readcnt mutex
 }Cache;
 
 Cache cachePool;
@@ -34,10 +33,7 @@ typedef struct{
     char path[MAXLINE];
 }reqLine;
 
-typedef struct{
-    char* rqst_line;
-    char* hdr_lines;
-}reqHeader;
+
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
@@ -96,7 +92,6 @@ void* thread(void * vargp){
 void doit(int client_fd){
     #define PORT_LEN 20
     char clientbuf[MAXLINE], objectbuf[MAX_OBJECT_SIZE], proxybuf[MAXLINE];
-    reqHeader new_hdr;
     reqLine request_line;
     int proxy_fd;
     rio_t proxy_rio, client_rio;
@@ -106,14 +101,18 @@ void doit(int client_fd){
     if (!Rio_readlineb(&client_rio, clientbuf, MAXLINE))
         return;
     printf("%s", clientbuf);
+    if(!strcasecmp(clientbuf, "GET")){
+       printf("invalid method\n");
+       return ;
+    };
     parse_request(clientbuf, &request_line);
     printf("host: %s\nport: %s\npath: %s\n", request_line.host, 
     request_line.port, request_line.path);
     /*check cache*/
-    // if(readCache(client_fd, request_line.uri)){
-    //     printf("find object in cache\n");
-    //     return ;
-    // }
+    if(readCache(client_fd, request_line.uri)){
+        printf("find object in cache\n");
+        return ;
+    }
     /*build a proxy web client*/
     proxy_fd = Open_clientfd(request_line.host, request_line.port);
     Rio_readinitb(&proxy_rio, proxy_fd);
@@ -149,7 +148,6 @@ void parse_request(char* buf, reqLine* request_line){
     char* port = request_line->port;
     char* path = request_line->path;
     sscanf(buf, "%s %s %s", method, uri, version);
-    assert(!strcasecmp(method, "GET"));
     parse_uri(uri, host, port, path);
 
 }
@@ -212,8 +210,6 @@ void initCache(Cache* cachePool){
         cachePool->objectList[i]->body = (char*) Malloc(MAX_OBJECT_SIZE);
         cachePool->objectList[i]->isEmpty = 1;
         cachePool->objectList[i]->LRU = 0;
-        cachePool->objectList[i]->LRU_mutex = (sem_t*) Malloc(sizeof(sem_t));
-        Sem_init(cachePool->objectList[i]->LRU_mutex, 0, 1);
     }
     printf("initalize cachePool successfully\n");
 }
@@ -232,9 +228,6 @@ int readCache(int fd, char* url){
             continue;
         if(!strcmp(url, cachePool.objectList[i]->name)){
             Rio_writen(fd, cachePool.objectList[i]->body, MAX_OBJECT_SIZE );
-            P(cachePool.objectList[i]->LRU_mutex);
-            cachePool.objectList[i]->LRU = 1;
-            V(cachePool.objectList[i]->LRU_mutex);
             ret = 1;
             break;
         }
@@ -266,6 +259,7 @@ void writeCache(char* url, char* object){
     while(!cachePool.objectList[tmpidx]->isEmpty){
         tmpidx = (tmpidx + 1)%MAX_CACHE_NUM;
     }
+    
     strcpy(cachePool.objectList[tmpidx]->name,url);
     strcpy(cachePool.objectList[tmpidx]->body, object);
     cachePool.objectList[tmpidx]->LRU = 1;
@@ -273,7 +267,7 @@ void writeCache(char* url, char* object){
     cachePool.objectNum++;
     cachePool.index = (tmpidx + 1)%MAX_CACHE_NUM;
     V(cachePool.RW_mutex);
-    printf("write cache successful, url: %s\n", url);
+    printf("cached object's url: %s\n", url);
 }
 
 
