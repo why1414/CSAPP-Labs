@@ -26,8 +26,32 @@ proxy lab主要分为三个部分，
     Terminated
 > solution：经检查是```nop-server.py```中执行环境的问题。handout中```nop-server.py```的初始环境path```#!/usr/bin/python```，而我的wsl中环境path中是```/usr/bin/python3```。把```nop-server.py```首行的环境改为自己本地对应的python环境即可。
 
+## part III cache
+cache数据结构
+```c
+typedef struct{
+    char* name;
+    char* body;
+    int LRU;
+    int isEmpty;
+}object;
+
+typedef struct{
+    object* objectList[MAX_CACHE_NUM];
+    int objectNum;
+    int readcnt; // record number of readers for cache
+    int index;  // index for LRU
+    sem_t *RW_mutex; // mutex for read and write on the whole cachePool
+    sem_t *RC_mutex; // readcnt mutex
+}Cache;
+```
+
 
 
 
 ## References:
 https://www.jianshu.com/p/a501d0c2f131
+
+https://zhuanlan.zhihu.com/p/37902495
+
+https://blog.csdn.net/weixin_44520881/article/details/109518057
