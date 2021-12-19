@@ -45,7 +45,7 @@ typedef struct{
     sem_t *RC_mutex; // readcnt mutex
 }Cache;
 ```
-![avatar](./scores.png)
+![avatar](https://github.com/why1414/CSAPP-Labs/blob/21bd7b0ff8689d40380554752842549b6ada5419/proxylab-handout/scores.PNG)
 
 
 
