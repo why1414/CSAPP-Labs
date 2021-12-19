@@ -45,7 +45,7 @@ typedef struct{
     sem_t *RC_mutex; // readcnt mutex
 }Cache;
 ```
-
+![avatar](./scores.png)
 
 
 
