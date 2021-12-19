@@ -114,7 +114,6 @@ void doit(int client_fd){
     //     printf("find object in cache\n");
     //     return ;
     // }
-    printf("Not in cache, build a connection\n");
     /*build a proxy web client*/
     proxy_fd = Open_clientfd(request_line.host, request_line.port);
     Rio_readinitb(&proxy_rio, proxy_fd);
