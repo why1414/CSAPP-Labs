@@ -27,4 +27,8 @@ handin:
 clean:
 	rm -f *~ *.o mdriver
 
+test: test.o mm.o memlib.o
+	gcc  -Wall -O2 -m32 -o test test.o mm.o memlib.o
+
+
 
