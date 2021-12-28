@@ -43,19 +43,20 @@ team_t team = {
     #define DEBUG_PRINT(X,...)
 #endif
 
-/*
- * If NEXT_FIT defined use next fit search, else use first fit search 
- */
-#define NEXT_FIT
 
 /* $begin mallocmacros */
 /* Basic constrants and macros */
 #define WSIZE 4
 #define DSIZE 8
-#define CHUNKSIZE (1<<12) /* Extend heap by this amount (bytes) */
+#define CHUNKSIZE (1<<12) /* Extend heap by this amount (bytes) 4k (1 page) */
+#define ALIGNMENT DSIZE
+
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 
+/* rounds up to the nearest multiple of ALIGNMENT */
+#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)  
+#define ADJUST(size) (ALIGN(size) + DSIZE)
 /* Pack a size and allocated bit into a word */
 #define PACK(size, alloc) ((size) | (alloc))
 /* Reand and write a word at address p */
@@ -74,9 +75,6 @@ team_t team = {
 
 /* Global variables */
 static char *heap_listp = 0;  /* Pointer to first block */  
-#ifdef NEXT_FIT
-static char *rover;           /* Next fit rover */
-#endif
 
 /* Function prototypes for internal helper routines */
 static void *extend_heap(size_t words);
@@ -96,9 +94,6 @@ int mm_init(void)
     PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */ 
     PUT(heap_listp + (3*WSIZE), PACK(0, 1));     /* Epilogue header */
     heap_listp += (2*WSIZE);                     //line:vm:mm:endinit  
-#ifdef NEXT_FIT
-    rover = heap_listp;
-#endif    
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL) 
 	    return -1;
@@ -116,7 +111,6 @@ void *mm_malloc(size_t size)
     size_t asize; /* Adjusted block size */
     size_t extendsize; /* Amount to extend heap if no fit */
     char *bp;
-
     if (heap_listp == 0){
         mm_init();
     }
@@ -124,10 +118,7 @@ void *mm_malloc(size_t size)
     if (size == 0)
         return NULL;
     /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= DSIZE)
-        asize = 2*DSIZE;
-    else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
+    asize = ADJUST(size);
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL){
         place(bp, asize);
@@ -145,15 +136,12 @@ void *mm_malloc(size_t size)
 static void *find_fit(size_t asize){
     /* first fit */
     DEBUG_PRINT("find_fit starting...");
-    void *bp = HDRP(heap_listp);
+    void *bp = heap_listp;
     while (GET_SIZE(HDRP(bp))>0){
-        if ( !GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp))>=asize){
+        if ( !GET_ALLOC(HDRP(bp)) && (GET_SIZE(HDRP(bp))>=asize)){
             return bp;
         }
-        else {
-            bp = NEXT_BLKP(bp);
-           
-        }
+        bp = NEXT_BLKP(bp);
     }
     return NULL;
 
@@ -161,11 +149,15 @@ static void *find_fit(size_t asize){
 
 static void place(void *bp, size_t asize){
     size_t size = GET_SIZE(HDRP(bp));
-    PUT(HDRP(bp), PACK(asize, 1));
-    PUT(FTRP(bp), PACK(asize, 1));
-    if(asize < size){
+    if(size-asize >= 2*DSIZE){
+        PUT(HDRP(bp), PACK(asize, 1));
+        PUT(FTRP(bp), PACK(asize, 1));
         PUT(HDRP(NEXT_BLKP(bp)), PACK(size-asize, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size-asize, 0));
+    }
+    else {
+        PUT(HDRP(bp), PACK(size, 1));
+        PUT(FTRP(bp), PACK(size, 1));
     }
 }
 
@@ -174,9 +166,11 @@ static void place(void *bp, size_t asize){
  */
 void mm_free(void *bp)
 {
+    if (bp == 0)
+        return;
     size_t size = GET_SIZE(HDRP(bp));
     PUT(HDRP(bp), PACK(size, 0));
-    PUT(HDRP(bp), PACK(size, 0));
+    PUT(FTRP(bp), PACK(size, 0));
     /* Coalesce if the previous block or next block was free */
     coalesce(bp);
 }
@@ -221,21 +215,27 @@ static void *coalesce(void *bp){
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *oldptr = ptr;
+    DEBUG_PRINT("realloc starting...");
     void *newptr;
     size_t copySize;
-    
-    if (oldptr == NULL)
+    size_t oldsize ;
+
+    if (ptr == NULL)
         return mm_malloc(size);
     if (size == 0){
-        mm_free(oldptr);
-        return NULL;
+        mm_free(ptr);
+        return 0;
     }
-
+    /* move data */
+    oldsize = GET_SIZE(HDRP(ptr));
     newptr = mm_malloc(size);
-    copySize = size<GET_SIZE(HDRP(oldptr)) ? size : GET_SIZE(HDRP(oldptr));
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
+    if (newptr == NULL)
+        return 0;
+    copySize = -MAX(-size,-oldsize);
+    memcpy(newptr,ptr,copySize);
+    /*free old block*/
+    mm_free(ptr);
+
     return newptr;
 }
 
