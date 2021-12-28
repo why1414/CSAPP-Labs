@@ -30,7 +30,9 @@ void *mm_realloc(void *ptr, size_t size);
 static char *heap_listp; /* Pointer to first block */
 
 /* 
-note: 在此实现中，在mm_init()中不需要使用mem_init()来初始化heap, 直接用mem_sbrk()来分配内存。 因为在使用mm.c的过程, mem_init()由用户来初始化。 此lab中 就是由mdriver.c 来调用mem_init()初始化的 
+note: 在此实现中，在mm_init()中不需要使用mem_init()来初始化heap, 
+直接用mem_sbrk()来分配内存。 因为在使用mm.c的过程, mem_init()由用户来初始化。 
+此lab中 就是由mdriver.c 来调用mem_init()初始化的 
 */
 
 int mm_init(void){
@@ -86,9 +88,9 @@ void *mm_realloc(void *ptr, size_t size){
     7       yes   55%   12000  0.160954    75
     8       yes   51%   24000  0.303843    79
     9       yes   27%   14401  0.117529   123
-   10       yes   34%   14401  0.002695  5343
-   Total          74%  112372  0.636350   177
-
+    10       yes   34%   14401  0.002695  5343
+    Total          74%  112372  0.636350   177
+    
     Perf index = 44 (util) + 12 (thru) = 56/100
     
 ## 实现 II 显式空闲链表
