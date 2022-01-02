@@ -218,7 +218,7 @@ void *mm_realloc(void *ptr, size_t size)
     DEBUG_PRINT("realloc starting...");
     void *newptr;
     size_t copySize;
-    size_t oldsize ;
+    size_t oldsize, newsize ;
 
     if (ptr == NULL)
         return mm_malloc(size);
@@ -229,9 +229,10 @@ void *mm_realloc(void *ptr, size_t size)
     /* move data */
     oldsize = GET_SIZE(HDRP(ptr));
     newptr = mm_malloc(size);
+    newsize = GET_SIZE(HDRP(newptr));
     if (newptr == NULL)
         return 0;
-    copySize = -MAX(-size,-oldsize);
+    copySize = -MAX(-newsize,-oldsize)-DSIZE;
     memcpy(newptr,ptr,copySize);
     /*free old block*/
     mm_free(ptr);

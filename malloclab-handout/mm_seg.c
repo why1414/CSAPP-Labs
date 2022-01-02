@@ -35,8 +35,12 @@ team_t team = {
     ""
 };
 
-/* debug macro */
+/* control macros */
 // #define DEBUG
+#define __BESTFIT__ 
+/* end control macros */
+
+/* debug macro */
 #ifdef DEBUG
     #define DEBUG_PRINT(format, ...) printf("[DEBUG] File: "__FILE__", Line: %d, "format"\r\n",__LINE__, ##__VA_ARGS__)
     #define HEAP_CHECK() mm_check()
@@ -180,11 +184,30 @@ void *mm_malloc(size_t size)
 }
 
 static void *find_fit(size_t asize){
-    /* first fit */
+    
     DEBUG_PRINT("find_fit starting...");
     size_t idx=Index(asize);
-    void *lp = listArray+idx*WSIZE;
     void *bp;
+#ifdef __BESTFIT__
+    /* best fit */
+    void *bestbp;
+    while(idx < LISTARR_MAX_LEN){
+        bp = GET(listArray+idx*WSIZE);
+        bestbp = NULL;
+        while(bp){
+            if(GET_SIZE(HDRP(bp)) >= asize){
+                if(bestbp == NULL ||
+                    GET_SIZE(HDRP(bp)) < GET_SIZE(HDRP(bestbp)))
+                    bestbp = bp;
+            }
+            bp = SUCC_BLKP(bp);
+        }
+        if( bestbp )
+            return bestbp;
+        idx++;
+    }
+#else
+    /* first fit (default) */
     while(idx < LISTARR_MAX_LEN){
         bp = GET(listArray+idx*WSIZE);
         while(bp){
@@ -194,6 +217,8 @@ static void *find_fit(size_t asize){
         }
         idx++;
     }
+#endif
+
     return NULL;
 
 }
@@ -226,13 +251,10 @@ static void deleteBlock(void *bp){
     void *lp = listArray+idx*WSIZE;
     /* head block of list */  
     if(PRED_BLKP(bp) == NULL){
-        DEBUG_PRINT("code is here");
         PUT(lp, SUCC_BLKP(bp));
-        DEBUG_PRINT("code is here");
     } 
     else {
         PUT(SUCC(PRED_BLKP(bp)), SUCC_BLKP(bp));
-        DEBUG_PRINT("code is here");
     }
     if(SUCC_BLKP(bp))
         PUT(PRED(SUCC_BLKP(bp)), PRED_BLKP(bp));
@@ -322,9 +344,10 @@ static void *coalesce(void *bp){
 void *mm_realloc(void *ptr, size_t size)
 {
     DEBUG_PRINT("realloc starting...");
-    void *newptr;
-    size_t copySize;
-    size_t oldsize ;
+    void *newptr, *coalptr;
+    size_t newsize, coalsize, oldsize ;
+    oldsize = GET_SIZE(HDRP(ptr));
+    newsize = ADJUST(size);
 
     if (ptr == NULL)
         return mm_malloc(size);
@@ -332,15 +355,47 @@ void *mm_realloc(void *ptr, size_t size)
         mm_free(ptr);
         return 0;
     }
-    /* move data */
-    oldsize = GET_SIZE(HDRP(ptr));
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
-        return 0;
-    copySize = -MAX(-size,-oldsize);
-    memcpy(newptr,ptr,copySize);
-    /*free old block*/
-    mm_free(ptr);
+    
+    /* ipmroved realloc method */
+    /* try to coalesce prev or next free blocks */
+    coalptr = coalesce(ptr);
+    coalsize = GET_SIZE(HDRP(coalptr));
+    PUT(HDRP(coalptr), PACK(coalsize, 1));
+    PUT(FTRP(coalptr), PACK(coalsize, 1));
+    if(coalptr != ptr){
+        memcpy(coalptr,ptr,oldsize-DSIZE);
+    }
+    if(newsize <= coalsize && coalsize-newsize<2*DSIZE ){
+        newptr = coalptr;
+    }
+    else if( newsize < coalsize){
+        PUT(HDRP(coalptr), PACK(newsize, 1));
+        PUT(FTRP(coalptr), PACK(newsize, 1));
+        PUT(HDRP(NEXT_BLKP(coalptr)), PACK(coalsize-newsize, 0));
+        PUT(FTRP(NEXT_BLKP(coalptr)), PACK(coalsize-newsize, 0));
+        addBlock(NEXT_BLKP(coalptr));
+        newptr = coalptr;
+    }
+    else{
+        newptr = mm_malloc(size);
+        
+        if(newptr == NULL)
+            return 0;
+        memcpy(newptr, coalptr, oldsize);
+        mm_free(coalptr);
+        
+    }
+
+    /* original realloc method */
+    // /* move data */
+    // oldsize = GET_SIZE(HDRP(ptr));
+    // newptr = mm_malloc(size);
+    // if (newptr == NULL)
+    //     return 0;
+    // copySize = -MAX(-size,-oldsize);
+    // memcpy(newptr,ptr,copySize);
+    // /*free old block*/
+    // mm_free(ptr);
 
     return newptr;
 }
