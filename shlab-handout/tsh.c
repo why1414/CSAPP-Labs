@@ -183,15 +183,16 @@ void eval(char *cmdline)
     char *argv[MAXARGS];
     int state;
     pid_t pid;
-
+    sigset_t mask_chld, mask_all, prev_mask;
+    sigemptyset(&mask_chld);
+    sigaddset(&mask_chld, SIGCHLD);
+    sigfillset(&mask_all);
     state = parseline(cmdline, argv);
     if(argv[0] == NULL) // ignore empty command line
         return ;
     if(!builtin_cmd(argv)){
-        sigset_t mask, prev_mask;
-        sigemptyset(&mask);
-        sigaddset(&mask, SIGCHLD);
-        sigprocmask(SIG_BLOCK, &mask, &prev_mask); /* 阻塞 SIGCHLD 信号 */
+       
+        sigprocmask(SIG_BLOCK, &mask_chld, &prev_mask); /* 阻塞 SIGCHLD 信号 */
         if((pid = fork()) == 0){ /* child process*/
             /* puts the child in a new process group 
             whose group ID is identical to the child’s PID */
@@ -204,7 +205,9 @@ void eval(char *cmdline)
                 exit(0);
             }
         }
+        
         /* parent process */
+        sigprocmask(SIG_BLOCK, &mask_all, NULL); /* block all sigs  */
         addjob(jobs, pid, state, cmdline);
          /* 父进程 解除阻塞 */
         sigprocmask(SIG_SETMASK, &prev_mask, NULL);
@@ -365,15 +368,17 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
-    // int status;
-    // if(waitpid(pid, &status, WUNTRACED) < 0)
-    //     unix_error("waitfg: waitpid error");
-    // if (WIFEXITED(status))
-    //     deletejob(jobs, pid);
+    
 
     /* block until the the child process is deleted by sigchld_handler */
+    // while(pid == fgpid(jobs))
+    //     sleep(0);
+    /* a better way to block the foreground child process */
+    
+    sigset_t noBlkMask;
+    sigemptyset(&noBlkMask); /* 阻塞集合为空 */
     while(pid == fgpid(jobs))
-        sleep(0);
+        sigsuspend(&noBlkMask);
     return;
 }
 
@@ -394,6 +399,10 @@ void sigchld_handler(int sig)
     pid_t pid;
     int status;
     struct job_t *job;
+    sigset_t mask, prev_mask;
+    sigfillset(&mask);
+    /* block all sigs to protect global vars */
+    sigprocmask(SIG_BLOCK, &mask, &prev_mask);
     while((pid = waitpid(-1, &status, WNOHANG | WUNTRACED)) >0 ){
         /* 正常退出 */
         if(WIFEXITED(status)){
@@ -414,6 +423,8 @@ void sigchld_handler(int sig)
         }
 
     }
+    /* restore sigs */
+    sigprocmask(SIG_SETMASK, &prev_mask, NULL);
     errno = olderrno ;
     return ;
 }
@@ -427,7 +438,13 @@ void sigint_handler(int sig)
 {
     int olderrno = errno;
     pid_t pid;
+    sigset_t mask, prev_mask;
+    sigfillset(&mask);
+    /* block all sigs to protect global vars */
+    sigprocmask(SIG_BLOCK, &mask, &prev_mask);
     pid = fgpid(jobs);
+    /* restore sigs */
+    sigprocmask(SIG_SETMASK, &prev_mask, NULL);
     if(pid > 0){
         kill(-pid, sig);
     }
@@ -445,7 +462,13 @@ void sigtstp_handler(int sig)
 {   
     int olderrno = errno;
     pid_t pid;
+    sigset_t mask, prev_mask;
+    sigfillset(&mask);
+    /* block all sigs to protect global vars */
+    sigprocmask(SIG_BLOCK, &mask, &prev_mask);
     pid = fgpid(jobs);
+    /* restore sigs */
+    sigprocmask(SIG_SETMASK, &prev_mask, NULL);
     if(pid > 0){
         kill(-pid, sig);
     }
